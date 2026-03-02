@@ -9,7 +9,7 @@ from langchain.prompts import PromptTemplate
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="AI Project Risk Manager", layout="wide")
-GOOGLE_API_KEY = "YOUR_GEMINI_API_KEY" # Recommendation: Use st.secrets
+GOOGLE_API_KEY = "AIzaSyDKqLVoqGQJtlPWrjDJ79jyQnGlzb7MQ6g" # Recommendation: Use st.secrets
 os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
 # --- DATA PROCESSING & VECTOR DB SETUP ---

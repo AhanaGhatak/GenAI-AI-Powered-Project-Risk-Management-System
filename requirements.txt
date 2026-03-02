@@ -1,7 +1,8 @@
 streamlit
 pandas
 langchain
+langchain-core
 langchain-community
 langchain-google-genai
-langchain-core
+langchain-classic
 chromadb

@@ -1,8 +1,8 @@
 streamlit
 pandas
 plotly
-langchain
+langchain>=0.3.0
 langchain-community
-langchain-google-genai
+langchain-google-genai>=4.2.0
 chromadb
 pypdf

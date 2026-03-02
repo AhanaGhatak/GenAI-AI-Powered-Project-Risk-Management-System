@@ -12,75 +12,82 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-# --- 1. THEME & ACCESSIBILITY STYLING ---
-st.set_page_config(page_title="AI Risk Control Tower", layout="wide", page_icon="🛡️")
+# --- 1. THEME & READABILITY STYLING ---
+st.set_page_config(page_title="Risk Control Tower", layout="wide", page_icon="🛡️")
 
 st.markdown("""
     <style>
-    /* Global Background */
-    .stApp { background-color: #f8fafc; }
+    /* Main Background */
+    .stApp { background-color: #fcfcfc; }
     
-    /* High-Contrast Sidebar Fix */
+    /* FIX: High-Readability Sidebar (Black text on White/Light Grey) */
     [data-testid="stSidebar"] {
-        background-image: linear-gradient(#0f172a, #1e293b);
-        min-width: 300px;
+        background-color: #f1f5f9 !important;
+        border-right: 1px solid #e2e8f0;
     }
     [data-testid="stSidebar"] .stMarkdown, 
     [data-testid="stSidebar"] label, 
-    [data-testid="stSidebar"] p {
-        color: #f1f5f9 !important; /* Vivid white for visibility */
-        font-weight: 500 !important;
-        font-size: 1rem;
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] h2 {
+        color: #0f172a !important; /* Dark Slate for perfect reading */
+        font-weight: 600 !important;
     }
     
-    /* Designer Metric Cards */
+    /* Top Heading Banner */
+    .main-header {
+        background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        padding: 25px;
+        border-radius: 12px;
+        color: white;
+        text-align: center;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .main-header h1 { color: white !important; margin: 0; font-size: 2.5rem; }
+    
+    /* Metric Cards */
     div[data-testid="stMetric"] {
         background: white;
         padding: 20px;
-        border-radius: 15px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        border-left: 8px solid #3b82f6;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        border: 1px solid #e2e8f0;
     }
-    /* RAG Status Colors for Metrics */
-    div[data-testid="stMetric"]:nth-child(1) { border-left-color: #ef4444; } /* Overdue Red */
-    div[data-testid="stMetric"]:nth-child(2) { border-left-color: #f59e0b; } /* High Risk Amber */
-    div[data-testid="stMetric"]:nth-child(3) { border-left-color: #10b981; } /* Health Green */
-    
-    /* Chat Bubble Styling */
-    .stChatMessage { border-radius: 12px; margin-bottom: 10px; border: 1px solid #e2e8f0; }
     </style>
+    
+    <div class="main-header">
+        <h1>PROJECT RISK INTELLIGENCE COMMAND</h1>
+        <p style="opacity: 0.8;">Enterprise Risk Monitoring & Strategic Analysis</p>
+    </div>
     """, unsafe_allow_html=True)
 
 # Secure API Key Handling
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("🔑 API Key Missing! Please add it to Streamlit Secrets.")
+    st.error("🔑 System Credentials Missing! Please update Secrets.")
     st.stop()
 
 # --- 2. DATA ENRICHMENT & VECTOR ENGINE ---
 @st.cache_resource
 def initialize_risk_engine():
     try:
-        # Load local datasets
         projects_df = pd.read_csv('project_risk_raw_dataset.csv')
         txns_df = pd.read_csv('transaction.csv')
         market_df = pd.read_csv('market_trends.csv')
 
-        # Calculate live market sentiment
         latest_market = market_df.sort_values('Date').groupby('Indicator').tail(1)
         market_summary = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_market.iterrows()])
 
-        # Enrich Project Data with Financial & Market Context
         def enrich_logic(row):
             pid = row['Project_ID']
             overdue_val = txns_df[(txns_df['Project_ID'] == pid) & (txns_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
             return (f"PROJECT ID: {pid} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | "
-                    f"Overdue: ${overdue_val:,.2f} | Market Context: {market_summary}")
+                    f"Overdue: ${overdue_val:,.2f} | Market: {market_summary}")
 
         projects_df['master_context'] = projects_df.apply(enrich_logic, axis=1)
         
-        # Build Vector Memory
+        # System uses AI Core for embeddings
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
         loader = DataFrameLoader(projects_df, page_content_column="master_context")
         vector_db = Chroma.from_documents(documents=loader.load(), embedding=embeddings)
@@ -90,61 +97,51 @@ def initialize_risk_engine():
         st.error(f"Engine Failure: {e}")
         return None, None, None, None
 
-# --- 3. UI LAYOUT & INTERACTIVITY ---
+# --- 3. UI LAYOUT ---
 db, p_df, t_df, m_df = initialize_risk_engine()
 
-# Sidebar Control Panel
 with st.sidebar:
-    st.title("🛡️ Control Panel")
-    st.markdown("---")
-    risk_level_ui = st.multiselect("Risk Sensitivity Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
-    complexity_threshold = st.slider("Complexity Intensity", 0, 10, (2, 8))
+    st.header("⚙️ CONTROL PANEL")
+    st.divider()
+    st.markdown("### DATA FILTERS")
+    risk_level_ui = st.multiselect("Risk Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
+    complexity_threshold = st.slider("Complexity Range", 0, 10, (1, 9))
     
-    st.markdown("### 🛰️ Connectivity")
-    st.success("● Google Gemini 3: ONLINE")
-    st.success("● Vector DB: SYNCED")
-    if st.button("Clear Cache & Reboot"):
+    st.markdown("---")
+    st.markdown("### 🛰️ SYSTEM STATUS")
+    st.success("● AI CORE: ONLINE")
+    st.success("● VECTOR DB: ACTIVE")
+    if st.button("🔄 REFRESH SYSTEM"):
         st.cache_resource.clear()
         st.rerun()
 
 if db:
-    # Top Row: Financial Intelligence Cards
+    # KPI Row
     col1, col2, col3, col4 = st.columns(4)
     overdue_total = t_df[t_df['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
     high_risk_count = len(p_df[p_df['Risk_Level'] == 'High'])
     
-    col1.metric("Financial Exposure", f"${overdue_total/1e6:.1f}M", delta="Overdue")
-    col2.metric("Critical Projects", high_risk_count, delta="Immediate Action")
-    col3.metric("System Health", "96%", delta="Optimal")
+    col1.metric("Financial Exposure", f"${overdue_total/1e6:.1f}M")
+    col2.metric("Critical Alerts", high_risk_count)
+    col3.metric("System Health", "98%")
     col4.metric("Market Sentiment", m_df.iloc[-1]['Market_Sentiment'])
 
     st.markdown("---")
 
-    # Middle Row: Visual Intelligence (Plotly Chart)
+    # Chart Section
     st.subheader("📊 Portfolio Risk Heatmap")
-    chart_col, info_col = st.columns([3, 1])
-    
-    with chart_col:
-        fig = px.scatter(
-            p_df, x="Complexity_Score", y="Budget_Utilization_Rate",
-            color="Risk_Level", size="Complexity_Score", hover_name="Project_ID",
-            color_discrete_map={"High": "#ef4444", "Medium": "#f59e0b", "Low": "#10b981"},
-            template="plotly_white", height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with info_col:
-        st.markdown("""
-        **How to read this chart:**
-        - **Y-Axis:** High spend utilization.
-        - **X-Axis:** Technical complexity.
-        - **Upper Right:** The "Danger Zone" requiring immediate intervention.
-        """)
+    fig = px.scatter(
+        p_df, x="Complexity_Score", y="Budget_Utilization_Rate",
+        color="Risk_Level", size="Complexity_Score", hover_name="Project_ID",
+        color_discrete_map={"High": "#ef4444", "Medium": "#f59e0b", "Low": "#10b981"},
+        template="plotly_white", height=450
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
-    # Bottom Row: AI Advisory Chat
-    st.subheader("🤖 AI Risk Advisor (Gemini 3)")
+    # Advisor Chat
+    st.subheader("🤖 STRATEGIC AI ADVISOR")
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -153,22 +150,21 @@ if db:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Ask for a risk summary of a specific project..."):
+    if prompt := st.chat_input("Enter inquiry regarding risk telemetry..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.status("Analyzing Project Telemetry...", expanded=False) as status:
-                # 2026 Stable Model: Gemini 3 Flash
+            with st.status("Processing Telemetry...", expanded=False) as status:
+                # Internal AI Core call
                 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
                 
                 qa_chain = create_stuff_documents_chain(llm, ChatPromptTemplate.from_messages([
-                    ("system", "You are a professional Lead Risk Officer. Use the provided context to analyze the query. Context: {context}"),
+                    ("system", "You are the Project Risk Commander. Use context to advise. Context: {context}"),
                     ("human", "{input}"),
                 ]))
                 
-                # Retrieve from Vector DB and Run Chain
                 rag_chain = create_retrieval_chain(db.as_retriever(search_kwargs={"k": 5}), qa_chain)
                 response = rag_chain.invoke({"input": prompt})
                 status.update(label="Analysis Complete", state="complete")

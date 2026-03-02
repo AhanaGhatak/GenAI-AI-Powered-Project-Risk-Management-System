@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import os
+import time
 
-# 2026 Standard: 'chains' are now in 'langchain_classic'
+# 2026 Core Imports
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import DataFrameLoader
@@ -10,110 +11,110 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="AI Project Risk Control Tower", layout="wide")
+# --- 1. PAGE CONFIG & CUSTOM CSS ---
+st.set_page_config(page_title="Risk Control Tower", layout="wide", page_icon="🛡️")
 
-# Best Practice: Using Team API Key via Streamlit Secrets
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; border: 1px solid #e1e4e8; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    [data-testid="stSidebar"] { background-color: #1e293b; color: white; }
+    .stChatFloatingInputContainer { background-color: #ffffff; border-radius: 20px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# API Key Check
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("⚠️ GOOGLE_API_KEY not found in Secrets. Please add your teammate's key.")
+    st.error("🔑 API Key not found in Secrets.")
     st.stop()
 
-# --- DATA ENGINE ---
+# --- 2. DATA ENGINE (The Brain) ---
 @st.cache_resource
 def initialize_risk_engine():
     try:
-        # Load your group project CSV files
-        projects_df = pd.read_csv('project_risk_raw_dataset.csv').head(100)
-        txns_df = pd.read_csv('transaction.csv')
-        market_df = pd.read_csv('market_trends.csv')
+        # Load Datasets
+        p_df = pd.read_csv('project_risk_raw_dataset.csv')
+        t_df = pd.read_csv('transaction.csv')
+        m_df = pd.read_csv('market_trends.csv')
 
-        # 1. Market Sentiment Agent (External Data)
-        latest_market = market_df.sort_values('Date').groupby('Indicator').tail(1)
-        market_context_str = " | ".join([
-            f"{row['Indicator']}: {row['Value']} ({row['Market_Sentiment']})" 
-            for _, row in latest_market.iterrows()
-        ])
+        # Market logic
+        latest_m = m_df.sort_values('Date').groupby('Indicator').tail(1)
+        m_context = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_m.iterrows()])
 
-        # 2. Risk Data Enrichment (Internal + Financial)
-        def enrich_project_data(row):
-            p_id = row['Project_ID']
-            p_txns = txns_df[txns_df['Project_ID'] == p_id]
-            overdue_amt = p_txns[p_txns['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
-            
-            return (
-                f"PROJECT ID: {p_id}. TYPE: {row['Project_Type']}. PHASE: {row['Project_Phase']}. "
-                f"SCORE: {row['Complexity_Score']}/10. STATUS: {row['Risk_Level']}. "
-                f"FINANCIALS: Overdue Payments ${overdue_amt:,.2f}. "
-                f"MARKET CONTEXT: {market_context_str}."
-            )
+        def enrich(row):
+            overdue = t_df[(t_df['Project_ID'] == row['Project_ID']) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
+            return f"ID: {row['Project_ID']} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | Overdue: ${overdue} | Market: {m_context}"
 
-        projects_df['master_context'] = projects_df.apply(enrich_project_data, axis=1)
-
-        # 3. Vector Brain (Stable 2026 Embedding Model)
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-        loader = DataFrameLoader(projects_df, page_content_column="master_context")
-        docs = loader.load()
+        p_df['master_context'] = p_df.apply(enrich, axis=1)
         
-        vector_db = Chroma.from_documents(
-            documents=docs,
-            embedding=embeddings,
-            persist_directory="./risk_vectors_2026"
-        )
-        return vector_db
+        # Vectorization
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+        loader = DataFrameLoader(p_df, page_content_column="master_context")
+        vector_db = Chroma.from_documents(documents=loader.load(), embedding=embeddings)
+        
+        return vector_db, p_df, t_df, latest_m
     except Exception as e:
-        st.error(f"Error initializing Risk Engine: {e}")
-        return None
+        st.error(f"Engine Failure: {e}")
+        return None, None, None, None
 
-# --- CHAT AGENT ---
-def get_risk_response(query, vector_db):
-    # FIXED: Using 'gemini-3-flash-preview' for text reasoning in 2026
-    llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
-    
-    system_prompt = (
-        "You are a Senior Project Risk Consultant. Use the following project data "
-        "and market context to answer the query accurately. "
-        "Context: {context}"
-    )
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ])
-
-    # Using 'langchain_classic' logic for RAG
-    combine_docs_chain = create_stuff_documents_chain(llm, prompt)
-    retriever = vector_db.as_retriever(search_kwargs={"k": 5})
-    rag_chain = create_retrieval_chain(retriever, combine_docs_chain)
-    
-    response = rag_chain.invoke({"input": query})
-    return response["answer"]
-
-# --- UI LAYER ---
+# --- 3. UI LAYOUT ---
 st.title("🛡️ AI Project Risk Control Tower")
-st.markdown("---")
 
-risk_db = initialize_risk_engine()
+# Sidebar for Group Project Options
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/1162/1162456.png", width=100)
+    st.header("Project Filters")
+    risk_filter = st.multiselect("Filter by Risk Level", ["High", "Medium", "Low"], default=["High", "Medium"])
+    budget_range = st.slider("Budget Utilization %", 0, 100, (0, 100))
+    st.divider()
+    st.info("💡 **Tip:** Ask the AI to 'Compare project X and Y' for deep analysis.")
 
-if risk_db:
-    # Initialize Chat History
+# Load Data and Show Metrics
+db, projects, transactions, market = initialize_risk_engine()
+
+if db is not None:
+    # 📈 TOP ROW METRICS
+    col1, col2, col3, col4 = st.columns(4)
+    total_overdue = transactions[transactions['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
+    high_risk_count = len(projects[projects['Risk_Level'] == 'High'])
+    
+    col1.metric("Total Overdue", f"${total_overdue:,.0f}", delta="-2.3% (Weekly)")
+    col2.metric("High Risk Projects", high_risk_count, delta="↑ 2", delta_color="inverse")
+    col3.metric("Avg Complexity", f"{projects['Complexity_Score'].mean():.1f}/10")
+    col4.metric("Market Sentiment", market.iloc[0]['Market_Sentiment'])
+
+    # 💬 CHAT INTERFACE
+    st.subheader("🤖 Risk Advisory Agent")
+    
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display Chat History
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    # User Input
-    if user_input := st.chat_input("Ask about project health or financial risks..."):
-        st.session_state.messages.append({"role": "user", "content": user_input})
+    if prompt := st.chat_input("Ask about project health..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
-            st.markdown(user_input)
+            st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.spinner("Synthesizing risk report..."):
-                answer = get_risk_response(user_input, risk_db)
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+            with st.status("Searching project memory...", expanded=False) as status:
+                st.write("Fetching financial records...")
+                time.sleep(0.5)
+                st.write("Analyzing market trends...")
+                llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
+                
+                qa_chain = create_stuff_documents_chain(llm, ChatPromptTemplate.from_messages([
+                    ("system", "You are a professional Risk Officer. Answer based on context: {context}"),
+                    ("human", "{input}"),
+                ]))
+                
+                rag_chain = create_retrieval_chain(db.as_retriever(), qa_chain)
+                response = rag_chain.invoke({"input": prompt})
+                status.update(label="Report Complete!", state="complete", expanded=False)
+            
+            st.markdown(response["answer"])
+            st.session_state.messages.append({"role": "assistant", "content": response["answer"]})

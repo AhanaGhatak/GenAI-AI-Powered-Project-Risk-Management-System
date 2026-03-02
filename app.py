@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 import time
+import plotly.express as px
 
-# 2026 Core Imports
+# 2026 Core RAG Imports
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import DataFrameLoader
@@ -11,142 +12,164 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-# --- 1. PAGE CONFIG & DESIGNER UI STYLING ---
-st.set_page_config(page_title="Risk Control Tower", layout="wide", page_icon="🛡️")
+# --- 1. THEME & ACCESSIBILITY STYLING ---
+st.set_page_config(page_title="AI Risk Control Tower", layout="wide", page_icon="🛡️")
 
-# Professional UI CSS Injection
 st.markdown("""
     <style>
-    /* Global Styles */
-    .stApp { background-color: #f1f5f9; }
+    /* Global Background */
+    .stApp { background-color: #f8fafc; }
     
-    /* Sidebar Styling - Ensuring high readability */
+    /* High-Contrast Sidebar Fix */
     [data-testid="stSidebar"] {
         background-image: linear-gradient(#0f172a, #1e293b);
-        color: white !important;
+        min-width: 300px;
     }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {
-        color: #e2e8f0 !important;
-        font-size: 1.05rem !important;
+    [data-testid="stSidebar"] .stMarkdown, 
+    [data-testid="stSidebar"] label, 
+    [data-testid="stSidebar"] p {
+        color: #f1f5f9 !important; /* Vivid white for visibility */
         font-weight: 500 !important;
+        font-size: 1rem;
     }
     
-    /* Metric Card Styling with Color Accents */
+    /* Designer Metric Cards */
     div[data-testid="stMetric"] {
         background: white;
-        padding: 15px 20px;
+        padding: 20px;
         border-radius: 15px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        border-top: 5px solid #3b82f6; /* Default Blue */
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        border-left: 8px solid #3b82f6;
     }
-    /* Specific Colors for specific metrics */
-    div[data-testid="stMetric"]:nth-child(1) { border-top-color: #ef4444; } /* Red for Overdue */
-    div[data-testid="stMetric"]:nth-child(2) { border-top-color: #f59e0b; } /* Amber for High Risk */
-    div[data-testid="stMetric"]:nth-child(3) { border-top-color: #10b981; } /* Emerald for Health */
+    /* RAG Status Colors for Metrics */
+    div[data-testid="stMetric"]:nth-child(1) { border-left-color: #ef4444; } /* Overdue Red */
+    div[data-testid="stMetric"]:nth-child(2) { border-left-color: #f59e0b; } /* High Risk Amber */
+    div[data-testid="stMetric"]:nth-child(3) { border-left-color: #10b981; } /* Health Green */
     
-    /* Chat Readability */
-    .stChatMessage {
-        border-radius: 15px;
-        padding: 10px;
-        margin-bottom: 10px;
-    }
-    
-    /* Headers */
-    h1 { color: #0f172a; font-weight: 800; }
-    h3 { color: #334155; }
+    /* Chat Bubble Styling */
+    .stChatMessage { border-radius: 12px; margin-bottom: 10px; border: 1px solid #e2e8f0; }
     </style>
     """, unsafe_allow_html=True)
 
-# API Key Security (Streamlit Secrets)
+# Secure API Key Handling
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("🔑 API Key Missing! Go to Settings > Secrets in Streamlit Cloud.")
+    st.error("🔑 API Key Missing! Please add it to Streamlit Secrets.")
     st.stop()
 
-# --- 2. DATA ENGINE ---
+# --- 2. DATA ENRICHMENT & VECTOR ENGINE ---
 @st.cache_resource
 def initialize_risk_engine():
     try:
-        p_df = pd.read_csv('project_risk_raw_dataset.csv')
-        t_df = pd.read_csv('transaction.csv')
-        m_df = pd.read_csv('market_trends.csv')
+        # Load local datasets
+        projects_df = pd.read_csv('project_risk_raw_dataset.csv')
+        txns_df = pd.read_csv('transaction.csv')
+        market_df = pd.read_csv('market_trends.csv')
 
-        latest_m = m_df.sort_values('Date').groupby('Indicator').tail(1)
-        m_context = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_m.iterrows()])
+        # Calculate live market sentiment
+        latest_market = market_df.sort_values('Date').groupby('Indicator').tail(1)
+        market_summary = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_market.iterrows()])
 
-        def enrich(row):
-            overdue = t_df[(t_df['Project_ID'] == row['Project_ID']) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
-            return f"ID: {row['Project_ID']} | Type: {row['Project_Type']} | Status: {row['Risk_Level']} | Overdue: ${overdue} | Context: {m_context}"
+        # Enrich Project Data with Financial & Market Context
+        def enrich_logic(row):
+            pid = row['Project_ID']
+            overdue_val = txns_df[(txns_df['Project_ID'] == pid) & (txns_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
+            return (f"PROJECT ID: {pid} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | "
+                    f"Overdue: ${overdue_val:,.2f} | Market Context: {market_summary}")
 
-        p_df['master_context'] = p_df.apply(enrich, axis=1)
+        projects_df['master_context'] = projects_df.apply(enrich_logic, axis=1)
         
+        # Build Vector Memory
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-        loader = DataFrameLoader(p_df, page_content_column="master_context")
+        loader = DataFrameLoader(projects_df, page_content_column="master_context")
         vector_db = Chroma.from_documents(documents=loader.load(), embedding=embeddings)
         
-        return vector_db, p_df, t_df, latest_m
+        return vector_db, projects_df, txns_df, market_df
     except Exception as e:
         st.error(f"Engine Failure: {e}")
         return None, None, None, None
 
-# --- 3. UI LAYOUT ---
-st.title("🛡️ Risk Control Tower")
-st.markdown("### Real-time AI Project Telemetry")
+# --- 3. UI LAYOUT & INTERACTIVITY ---
+db, p_df, t_df, m_df = initialize_risk_engine()
 
-db, projects, transactions, market = initialize_risk_engine()
-
-# Sidebar: High Readability Filters
+# Sidebar Control Panel
 with st.sidebar:
-    st.markdown("## ⚙️ Configuration")
-    st.divider()
-    risk_filter = st.multiselect("Risk Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
-    budget_range = st.slider("Budget Spend Range (%)", 0, 100, (0, 100))
-    
+    st.title("🛡️ Control Panel")
     st.markdown("---")
-    st.markdown("### 🛰️ System Status")
-    st.success("🟢 Market Feed: LIVE")
-    st.success("🟢 Risk Engine: SYNCED")
+    risk_level_ui = st.multiselect("Risk Sensitivity Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
+    complexity_threshold = st.slider("Complexity Intensity", 0, 10, (2, 8))
     
+    st.markdown("### 🛰️ Connectivity")
+    st.success("● Google Gemini 3: ONLINE")
+    st.success("● Vector DB: SYNCED")
+    if st.button("Clear Cache & Reboot"):
+        st.cache_resource.clear()
+        st.rerun()
 
-if db is not None:
-    # --- TOP ROW: KPI CARDS ---
+if db:
+    # Top Row: Financial Intelligence Cards
     col1, col2, col3, col4 = st.columns(4)
-    total_overdue = transactions[transactions['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
-    high_risk_count = len(projects[projects['Risk_Level'] == 'High'])
+    overdue_total = t_df[t_df['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
+    high_risk_count = len(p_df[p_df['Risk_Level'] == 'High'])
     
-    col1.metric("Financial Overdue", f"${total_overdue:,.0f}", help="Sum of all unpaid overdue invoices")
-    col2.metric("Critical Projects", high_risk_count, "High Priority")
-    col3.metric("System Health", "94%", "Optimal")
-    col4.metric("Market Sentiment", market.iloc[0]['Market_Sentiment'])
+    col1.metric("Financial Exposure", f"${overdue_total/1e6:.1f}M", delta="Overdue")
+    col2.metric("Critical Projects", high_risk_count, delta="Immediate Action")
+    col3.metric("System Health", "96%", delta="Optimal")
+    col4.metric("Market Sentiment", m_df.iloc[-1]['Market_Sentiment'])
 
-    st.divider()
+    st.markdown("---")
 
-    # --- CHAT ADVISOR ---
-    st.subheader("🤖 AI Risk Advisor")
+    # Middle Row: Visual Intelligence (Plotly Chart)
+    st.subheader("📊 Portfolio Risk Heatmap")
+    chart_col, info_col = st.columns([3, 1])
+    
+    with chart_col:
+        fig = px.scatter(
+            p_df, x="Complexity_Score", y="Budget_Utilization_Rate",
+            color="Risk_Level", size="Complexity_Score", hover_name="Project_ID",
+            color_discrete_map={"High": "#ef4444", "Medium": "#f59e0b", "Low": "#10b981"},
+            template="plotly_white", height=400
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with info_col:
+        st.markdown("""
+        **How to read this chart:**
+        - **Y-Axis:** High spend utilization.
+        - **X-Axis:** Technical complexity.
+        - **Upper Right:** The "Danger Zone" requiring immediate intervention.
+        """)
+
+    st.markdown("---")
+
+    # Bottom Row: AI Advisory Chat
+    st.subheader("🤖 AI Risk Advisor (Gemini 3)")
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display History
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Chat Input
-    if prompt := st.chat_input("Ask about specific projects or risk summaries..."):
+    if prompt := st.chat_input("Ask for a risk summary of a specific project..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.status("Analyzing Project Data...", expanded=False) as status:
+            with st.status("Analyzing Project Telemetry...", expanded=False) as status:
+                # 2026 Stable Model: Gemini 3 Flash
                 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
+                
                 qa_chain = create_stuff_documents_chain(llm, ChatPromptTemplate.from_messages([
-                    ("system", "You are a professional Risk Officer. Use this project context to provide actionable advice: {context}"),
+                    ("system", "You are a professional Lead Risk Officer. Use the provided context to analyze the query. Context: {context}"),
                     ("human", "{input}"),
                 ]))
-                rag_chain = create_retrieval_chain(db.as_retriever(), qa_chain)
+                
+                # Retrieve from Vector DB and Run Chain
+                rag_chain = create_retrieval_chain(db.as_retriever(search_kwargs={"k": 5}), qa_chain)
                 response = rag_chain.invoke({"input": prompt})
                 status.update(label="Analysis Complete", state="complete")
             

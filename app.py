@@ -9,31 +9,26 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import DataFrameLoader
 
-# --- 1. PREMIUM UI & BRANDING ---
-st.set_page_config(page_title="Risk Intelligence Command", layout="wide", page_icon="🛡️")
+# --- 1. UI & BRANDING ---
+st.set_page_config(page_title="Risk Intel Multi-Agent", layout="wide", page_icon="🛡️")
 
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
     [data-testid="stSidebar"] { background-color: #ffffff !important; border-right: 2px solid #e2e8f0; }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] p, [data-testid="stSidebar"] h2 {
-        color: #0f172a !important; font-weight: 600 !important;
-    }
     .main-header {
         background: linear-gradient(135deg, #0f172a 0%, #2563eb 100%);
         padding: 40px; border-radius: 20px; color: white; text-align: center; margin-bottom: 35px;
-        box-shadow: 0 10px 25px rgba(37, 99, 235, 0.1);
     }
     .agent-tag {
         background-color: #eff6ff; color: #1e40af; padding: 4px 12px;
-        border-radius: 12px; font-size: 0.75rem; font-weight: 800; border: 1px solid #bfdbfe;
-        margin-bottom: 8px; display: inline-block; text-transform: uppercase;
+        border-radius: 10px; font-size: 0.7rem; font-weight: 800; border: 1px solid #bfdbfe;
+        margin-bottom: 8px; display: inline-block;
     }
-    .stChatMessage { border-radius: 15px !important; border: 1px solid #e2e8f0 !important; }
     </style>
     <div class="main-header">
         <h1>PROJECT RISK INTELLIGENCE</h1>
-        <p style="font-size: 1.1rem; opacity: 0.85;">Multi-Agent Strategic Command & Control</p>
+        <p>Multi-Agent Collaborative Command Center • v2.0</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -44,16 +39,17 @@ else:
     st.error("🔑 System Credentials Missing! Check Streamlit Secrets.")
     st.stop()
 
-# --- 2. DATA & VECTOR ENGINE (QUOTA PROTECTED) ---
+# --- 2. DATA & VECTOR ENGINE ---
 @st.cache_resource
 def initialize_system():
-    persist_dir = "./risk_db_agents_v2"
+    persist_dir = "./risk_db_agents_v3"
     try:
         p_df = pd.read_csv('project_risk_raw_dataset.csv')
         t_df = pd.read_csv('transaction.csv')
         m_df = pd.read_csv('market_trends.csv')
         
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+        # Standard Stable Embedding Model
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         
         if os.path.exists(persist_dir):
             vector_db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
@@ -76,10 +72,10 @@ def initialize_system():
 
 db, p_df, t_df, m_df = initialize_system()
 
-# --- 3. MULTI-AGENT ARCHITECTURE ---
+# --- 3. MULTI-AGENT DEFINITIONS ---
 AGENTS = {
-    "Market Analysis Agent": "Analyze external financial trends. How does Market Sentiment affect viability?",
-    "Risk Scoring Agent": "Focus on Overdue amounts and Risk Levels. Prioritize the biggest financial threats.",
+    "Market Analysis Agent": "Analyze financial trends and news. Focus on how Market Sentiment affects viability.",
+    "Risk Scoring Agent": "Focus strictly on Overdue amounts and Risk Levels to prioritize financial danger.",
     "Project Status Agent": "Track complexity, schedule delays, and internal resource risks.",
     "Reporting Agent": "Synthesize data into professional summaries and executive alerts."
 }
@@ -87,45 +83,48 @@ AGENTS = {
 
 
 def run_agent_workflow(query, vector_db):
-    # 1. Retrieval
+    # 1. Retrieval (RAG)
     docs = vector_db.similarity_search(query, k=5)
     context = "\n".join([d.page_content for d in docs])
     
-    # 2. Supervisor Routing (The Project Risk Manager)
-    manager_llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    routing_prompt = f"Query: {query}\nPick one agent: {list(AGENTS.keys())}. Reply with ONLY the name."
+    # 2. Supervisor Routing
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1)
     
-    # Error-safe invocation
-    raw_decision = manager_llm.invoke(routing_prompt)
-    selected_agent = raw_decision.content.strip() if hasattr(raw_decision, 'content') else str(raw_decision).strip()
+    routing_prompt = f"Given this query: '{query}', which agent should handle it? {list(AGENTS.keys())}. Respond with ONLY the agent name."
     
-    # Clean up selection in case of extra text
-    for agent in AGENTS.keys():
-        if agent.lower() in selected_agent.lower():
-            selected_agent = agent
-            break
+    try:
+        raw_decision = llm.invoke(routing_prompt)
+        selected_agent = raw_decision.content.strip()
+        
+        # Clean up agent name mapping
+        matched_agent = "Reporting Agent" # Default fallback
+        for agent in AGENTS.keys():
+            if agent.lower() in selected_agent.lower():
+                matched_agent = agent
+                break
+    except:
+        matched_agent = "Reporting Agent"
 
     # 3. Specialist Execution
-    specialist_llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2)
-    agent_instr = AGENTS.get(selected_agent, "Provide general risk advice.")
+    agent_instr = AGENTS.get(matched_agent)
+    final_prompt = f"ROLE: {matched_agent}\nMISSION: {agent_instr}\nCONTEXT: {context}\nQUERY: {query}"
     
-    final_prompt = f"ROLE: {selected_agent}\nMISSION: {agent_instr}\nCONTEXT: {context}\nQUERY: {query}"
-    
-    raw_response = specialist_llm.invoke(final_prompt)
-    response_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
-    
-    return selected_agent, response_text
+    try:
+        raw_response = llm.invoke(final_prompt)
+        return matched_agent, raw_response.content
+    except Exception as e:
+        return "System Error", f"The AI encountered a safety or quota block: {str(e)}"
 
 # --- 4. DASHBOARD RENDER ---
 with st.sidebar:
     st.header("⚙️ SYSTEM CONTROLS")
-    st.write("🛰️ **Active Specialists:**")
+    st.write("🛰️ **Active Agents:**")
     for a in AGENTS.keys(): st.caption(f"• {a}")
     st.divider()
     if st.button("🚀 FULL SYSTEM REBOOT"):
         st.cache_resource.clear()
-        if os.path.exists("./risk_db_agents_v2"):
-            shutil.rmtree("./risk_db_agents_v2")
+        if os.path.exists("./risk_db_agents_v3"):
+            shutil.rmtree("./risk_db_agents_v3")
         st.rerun()
 
 if db is not None:

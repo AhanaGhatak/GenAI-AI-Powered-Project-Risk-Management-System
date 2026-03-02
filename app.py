@@ -49,7 +49,7 @@ def initialize_system():
         m_df = pd.read_csv('market_trends.csv')
         
         # Standard Stable Embedding Model
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         
         if os.path.exists(persist_dir):
             vector_db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)

@@ -11,51 +11,57 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-# --- 1. PAGE CONFIG & ENHANCED UI STYLING ---
+# --- 1. PAGE CONFIG & DESIGNER UI STYLING ---
 st.set_page_config(page_title="Risk Control Tower", layout="wide", page_icon="🛡️")
 
-# Custom CSS for Visibility and Modern Aesthetics
+# Professional UI CSS Injection
 st.markdown("""
     <style>
-    /* Main Background */
-    .stApp { background-color: #f8fafc; }
+    /* Global Styles */
+    .stApp { background-color: #f1f5f9; }
     
-    /* Sidebar Text Visibility Fix */
+    /* Sidebar Styling - Ensuring high readability */
     [data-testid="stSidebar"] {
-        background-color: #0f172a !important; /* Deep Navy */
+        background-image: linear-gradient(#0f172a, #1e293b);
+        color: white !important;
     }
-    [data-testid="stSidebar"] .stMarkdown, 
-    [data-testid="stSidebar"] label, 
-    [data-testid="stSidebar"] p {
-        color: #f1f5f9 !important; /* Off-White for readability */
-        font-weight: 500;
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {
+        color: #e2e8f0 !important;
+        font-size: 1.05rem !important;
+        font-weight: 500 !important;
     }
     
-    /* Metric Card Styling */
-    [data-testid="stMetricValue"] { color: #1e293b; font-weight: 700; }
-    .stMetric {
+    /* Metric Card Styling with Color Accents */
+    div[data-testid="stMetric"] {
         background: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-        border: 1px solid #e2e8f0;
+        padding: 15px 20px;
+        border-radius: 15px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border-top: 5px solid #3b82f6; /* Default Blue */
+    }
+    /* Specific Colors for specific metrics */
+    div[data-testid="stMetric"]:nth-child(1) { border-top-color: #ef4444; } /* Red for Overdue */
+    div[data-testid="stMetric"]:nth-child(2) { border-top-color: #f59e0b; } /* Amber for High Risk */
+    div[data-testid="stMetric"]:nth-child(3) { border-top-color: #10b981; } /* Emerald for Health */
+    
+    /* Chat Readability */
+    .stChatMessage {
+        border-radius: 15px;
+        padding: 10px;
+        margin-bottom: 10px;
     }
     
-    /* Chat Header Styling */
-    .chat-header {
-        font-size: 24px;
-        font-weight: 700;
-        color: #1e293b;
-        margin-bottom: 20px;
-    }
+    /* Headers */
+    h1 { color: #0f172a; font-weight: 800; }
+    h3 { color: #334155; }
     </style>
     """, unsafe_allow_html=True)
 
-# API Key Security
+# API Key Security (Streamlit Secrets)
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("🔑 API Key not found in Secrets. Please add it to Streamlit Cloud Settings.")
+    st.error("🔑 API Key Missing! Go to Settings > Secrets in Streamlit Cloud.")
     st.stop()
 
 # --- 2. DATA ENGINE ---
@@ -71,7 +77,7 @@ def initialize_risk_engine():
 
         def enrich(row):
             overdue = t_df[(t_df['Project_ID'] == row['Project_ID']) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
-            return f"ID: {row['Project_ID']} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | Overdue: ${overdue} | Market: {m_context}"
+            return f"ID: {row['Project_ID']} | Type: {row['Project_Type']} | Status: {row['Risk_Level']} | Overdue: ${overdue} | Context: {m_context}"
 
         p_df['master_context'] = p_df.apply(enrich, axis=1)
         
@@ -85,55 +91,59 @@ def initialize_risk_engine():
         return None, None, None, None
 
 # --- 3. UI LAYOUT ---
-st.title("🛡️ AI Project Risk Control Tower")
-st.markdown("---")
+st.title("🛡️ Risk Control Tower")
+st.markdown("### Real-time AI Project Telemetry")
 
 db, projects, transactions, market = initialize_risk_engine()
 
-# Sidebar with Fixed Visibility
+# Sidebar: High Readability Filters
 with st.sidebar:
-    st.title("⚙️ Control Panel")
-    st.markdown("### Filter Telemetry")
-    risk_filter = st.multiselect("Risk Sensitivity", ["High", "Medium", "Low"], default=["High", "Medium"])
-    budget_range = st.slider("Budget Utilization Target (%)", 0, 100, (0, 100))
+    st.markdown("## ⚙️ Configuration")
+    st.divider()
+    risk_filter = st.multiselect("Risk Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
+    budget_range = st.slider("Budget Spend Range (%)", 0, 100, (0, 100))
     
     st.markdown("---")
-    st.markdown("### 🤖 Agent Status")
-    st.success("● Market Agent: Active")
-    st.success("● Risk Agent: Active")
-    st.warning("● Prediction: Dynamic")
+    st.markdown("### 🛰️ System Status")
+    st.success("🟢 Market Feed: LIVE")
+    st.success("🟢 Risk Engine: SYNCED")
+    st.info("Using Gemini 3 Flash")
 
 if db is not None:
-    # Top Row Summary Cards
+    # --- TOP ROW: KPI CARDS ---
     col1, col2, col3, col4 = st.columns(4)
     total_overdue = transactions[transactions['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
     high_risk_count = len(projects[projects['Risk_Level'] == 'High'])
     
-    col1.metric("Financial Overdue", f"${total_overdue:,.0f}", delta="-2.3%")
-    col2.metric("Critical Alerts", high_risk_count, delta="High Risk", delta_color="inverse")
-    col3.metric("System Health", "94%", delta="Optimal")
-    col4.metric("Market Index", market.iloc[0]['Market_Sentiment'])
+    col1.metric("Financial Overdue", f"${total_overdue:,.0f}", help="Sum of all unpaid overdue invoices")
+    col2.metric("Critical Projects", high_risk_count, "High Priority")
+    col3.metric("System Health", "94%", "Optimal")
+    col4.metric("Market Sentiment", market.iloc[0]['Market_Sentiment'])
 
-    st.markdown("<div class='chat-header'>💬 Advisor Chat</div>", unsafe_allow_html=True)
+    st.divider()
+
+    # --- CHAT ADVISOR ---
+    st.subheader("🤖 AI Risk Advisor")
     
-    # Chat History logic
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Display History
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Ask about risk patterns..."):
+    # Chat Input
+    if prompt := st.chat_input("Ask about specific projects or risk summaries..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.status("Thinking...", expanded=False) as status:
+            with st.status("Analyzing Project Data...", expanded=False) as status:
                 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
                 qa_chain = create_stuff_documents_chain(llm, ChatPromptTemplate.from_messages([
-                    ("system", "You are a professional Risk Officer. Use context: {context}"),
+                    ("system", "You are a professional Risk Officer. Use this project context to provide actionable advice: {context}"),
                     ("human", "{input}"),
                 ]))
                 rag_chain = create_retrieval_chain(db.as_retriever(), qa_chain)

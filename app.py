@@ -18,17 +18,18 @@ st.set_page_config(page_title="Risk Intelligence Command", layout="wide", page_i
 st.markdown("""
     <style>
     /* Global Background */
-    .stApp { background-color: #f0f2f6; }
+    .stApp { background-color: #f8fafc; }
     
-    /* SIDEBAR: High-Contrast & Professional (Black text on White) */
+    /* SIDEBAR: High-Readability (Black text on White/Light Grey) */
     [data-testid="stSidebar"] {
         background-color: #ffffff !important;
         border-right: 2px solid #e2e8f0;
     }
     [data-testid="stSidebar"] .stMarkdown, 
     [data-testid="stSidebar"] label, 
-    [data-testid="stSidebar"] p {
-        color: #1e293b !important;
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] h2 {
+        color: #0f172a !important; /* Dark Slate for perfect reading */
         font-weight: 600 !important;
     }
     
@@ -67,8 +68,8 @@ st.markdown("""
     </style>
     
     <div class="main-header">
-        <h1>RISK INTELLIGENCE COMMAND</h1>
-        <p style="font-size: 1.2rem; opacity: 0.9;">Strategic Multi-Agent Oversight & Risk Mitigation</p>
+        <h1>PROJECT RISK INTELLIGENCE</h1>
+        <p style="font-size: 1.2rem; opacity: 0.9;">Enterprise Command & Risk Mitigation Engine</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -79,39 +80,53 @@ else:
     st.error("🔑 System Credentials Missing! Please update Secrets.")
     st.stop()
 
-# --- 2. DATA ENRICHMENT ENGINE ---
+# --- 2. PERSISTENT DATA ENGINE ---
 @st.cache_resource
 def initialize_risk_engine():
+    persist_dir = "./risk_db_2026"
     try:
         p_df = pd.read_csv('project_risk_raw_dataset.csv')
         t_df = pd.read_csv('transaction.csv')
         m_df = pd.read_csv('market_trends.csv')
 
-        latest_market = m_df.sort_values('Date').groupby('Indicator').tail(1)
-        market_summary = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_market.iterrows()])
-
-        def enrich_logic(row):
-            pid = row['Project_ID']
-            overdue_val = t_df[(t_df['Project_ID'] == pid) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
-            return (f"PROJECT ID: {pid} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | "
-                    f"Overdue: ${overdue_val:,.2f} | Market: {market_summary}")
-
-        p_df['master_context'] = p_df.apply(enrich_logic, axis=1)
-        
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-        loader = DataFrameLoader(p_df, page_content_column="master_context")
-        vector_db = Chroma.from_documents(documents=loader.load(), embedding=embeddings)
+
+        # Check if we can load from disk to save quota
+        if os.path.exists(persist_dir):
+            vector_db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
+        else:
+            latest_market = m_df.sort_values('Date').groupby('Indicator').tail(1)
+            m_summary = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_market.iterrows()])
+
+            def enrich(row):
+                pid = row['Project_ID']
+                overdue = t_df[(t_df['Project_ID'] == pid) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
+                return (f"PROJECT ID: {pid} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | "
+                        f"Overdue: ${overdue:,.2f} | Market: {m_summary}")
+
+            p_df['master_context'] = p_df.apply(enrich, axis=1)
+            loader = DataFrameLoader(p_df, page_content_column="master_context")
+            
+            # This step uses API quota (only runs if persist_dir doesn't exist)
+            vector_db = Chroma.from_documents(
+                documents=loader.load(), 
+                embedding=embeddings, 
+                persist_directory=persist_dir
+            )
         
         return vector_db, p_df, t_df, m_df
     except Exception as e:
-        st.error(f"Engine Failure: {e}")
+        if "429" in str(e):
+            st.error("🚫 API Quota Limit Hit. Please wait 60 seconds and refresh.")
+        else:
+            st.error(f"Engine Failure: {e}")
         return None, None, None, None
 
 # --- 3. DASHBOARD EXECUTION ---
 db, p_df, t_df, m_df = initialize_risk_engine()
 
 with st.sidebar:
-    st.header("SYSTEM CONTROLS")
+    st.header("⚙️ SYSTEM CONTROLS")
     st.divider()
     risk_level_ui = st.multiselect("Priority Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
     complexity_threshold = st.slider("Complexity Intensity", 0, 10, (2, 9))
@@ -119,8 +134,12 @@ with st.sidebar:
     st.markdown("---")
     st.success("● CORE PROCESSOR: ACTIVE")
     st.success("● NEURAL MEMORY: SYNCED")
-    if st.button("🚀 REBOOT SYSTEM"):
+    if st.button("🚀 FULL SYSTEM REBOOT"):
+        # Deletes the local db and cache to start fresh
         st.cache_resource.clear()
+        if os.path.exists("./risk_db_2026"):
+            import shutil
+            shutil.rmtree("./risk_db_2026")
         st.rerun()
 
 if db:
@@ -130,7 +149,7 @@ if db:
     high_risk_count = len(p_df[p_df['Risk_Level'] == 'High'])
     
     col1.metric("Financial Exposure", f"${overdue_total/1e6:.1f}M", "Total Overdue")
-    col2.metric("Critical Projects", high_risk_count, "High Priority")
+    col2.metric("Critical Alerts", high_risk_count, "High Priority")
     col3.metric("System Health", "98%", "Stable")
     col4.metric("Market Sentiment", m_df.iloc[-1]['Market_Sentiment'], "Live Feed")
 
@@ -159,7 +178,7 @@ if db:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Analyze specific risk patterns..."):
+    if prompt := st.chat_input("Inquire about specific risk patterns..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)

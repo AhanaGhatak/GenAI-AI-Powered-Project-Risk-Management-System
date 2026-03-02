@@ -8,29 +8,30 @@ import os
 import plotly.express as px
 import shutil
 
-# 2026 Core Imports
+# 2026 Standard Imports
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import DataFrameLoader
 
 # --- 1. UI SETUP ---
-st.set_page_config(page_title="Risk Intel Command", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Risk Intel Multi-Agent", layout="wide", page_icon="🛡️")
 
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
     .main-header {
-        background: linear-gradient(135deg, #0f172a 0%, #1e40af 100%);
-        padding: 2rem; border-radius: 15px; color: white; text-align: center; margin-bottom: 2rem;
+        background: linear-gradient(135deg, #0f172a 0%, #2563eb 100%);
+        padding: 40px; border-radius: 20px; color: white; text-align: center; margin-bottom: 35px;
     }
     .agent-tag {
-        background-color: #dbeafe; color: #1e40af; padding: 4px 10px;
-        border-radius: 8px; font-size: 0.7rem; font-weight: 700; border: 1px solid #93c5fd;
+        background-color: #eff6ff; color: #1e40af; padding: 4px 12px;
+        border-radius: 10px; font-size: 0.7rem; font-weight: 800; border: 1px solid #bfdbfe;
+        margin-bottom: 8px; display: inline-block;
     }
     </style>
     <div class="main-header">
         <h1>PROJECT RISK INTELLIGENCE</h1>
-        <p>Gemini 3 Multi-Agent Architecture • Stable 2026</p>
+        <p>Gemini 3.1 Stable Multi-Agent Architecture • 2026</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -41,11 +42,11 @@ else:
     st.error("🔑 API Key Missing! Please add GOOGLE_API_KEY to Streamlit Secrets.")
     st.stop()
 
-# --- 2. DATA ENGINE (MODELS UPDATED) ---
+# --- 2. DATA ENGINE (FIXED MODELS) ---
 @st.cache_resource
 def initialize_system():
-    # Folder v7 for 2026 model compatibility
-    persist_dir = "./risk_db_v7_stable"
+    # Folder v8 ensures we avoid any previous version conflicts
+    persist_dir = "./risk_db_v8_final"
     
     try:
         p_df = pd.read_csv('project_risk_raw_dataset.csv')
@@ -76,7 +77,7 @@ def initialize_system():
 
 db, p_df, t_df, m_df = initialize_system()
 
-# --- 3. AGENT DEFINITIONS ---
+# --- 3. AGENT LOGIC (FIXED FOR LIST/STRIP ERROR) ---
 AGENTS = {
     "Market Analyst": "Evaluate external sentiment and financial trends.",
     "Financial Auditor": "Analyze overdue payments and budget utilization.",
@@ -84,56 +85,64 @@ AGENTS = {
     "Executive Reporter": "Summarize all risks for high-level stakeholders."
 }
 
+def extract_text(response):
+    """Safely extracts text from Gemini 3 response objects/lists."""
+    content = getattr(response, "content", response)
+    if isinstance(content, list):
+        return "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in content]).strip()
+    return str(content).strip()
+
+
+
 def run_agent_workflow(query, vector_db):
     try:
         # RAG Search
         docs = vector_db.similarity_search(query, k=4)
         context = "\n".join([d.page_content for d in docs])
         
-        # USE GEMINI 3 FLASH (The 2026 Workhorse)
-        llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
+        # 2026 Stable Flash Model
+        llm = ChatGoogleGenerativeAI(model="gemini-3-flash", temperature=0.1)
         
-        # Routing Logic
+        # 1. Routing
         routing_prompt = f"Query: {query}\nSelect one agent: {list(AGENTS.keys())}. Reply with the NAME ONLY."
         raw_decision = llm.invoke(routing_prompt)
-        selected_name = raw_decision.content.strip()
+        selected_name = extract_text(raw_decision)
         
         active_agent = next((a for a in AGENTS.keys() if a.lower() in selected_name.lower()), "Executive Reporter")
         
-        # Specialist Instruction
+        # 2. Specialist Response
         instruction = AGENTS.get(active_agent)
         final_prompt = f"ROLE: {active_agent}\nGOAL: {instruction}\nDATA: {context}\nUSER: {query}"
         
-        response = llm.invoke(final_prompt)
-        return active_agent, response.content
+        raw_response = llm.invoke(final_prompt)
+        return active_agent, extract_text(raw_response)
     except Exception as e:
-        # Graceful fallback if any specific model ID fails
-        return "System", f"The AI is currently updating its thinking core. Error details: {str(e)}"
+        return "System", f"Agent Workflow Error: {str(e)}"
 
-# --- 4. APP INTERFACE ---
+# --- 4. DASHBOARD ---
 with st.sidebar:
-    st.header("⚙️ SYSTEM CONFIG")
+    st.header("⚙️ SYSTEM CONTROL")
     if st.button("🚀 FULL SYSTEM WIPE"):
         st.cache_resource.clear()
         # Clean up all legacy folders
-        folders = ["./risk_db_agents_v3", "./risk_db_final_v4", "./risk_db_final_v5", "./risk_db_v6_stable", "./risk_db_v7_stable"]
+        folders = ["./risk_db_agents_v3", "./risk_db_final_v5", "./risk_db_v7_stable", "./risk_db_v8_final"]
         for f in folders:
             if os.path.exists(f):
                 shutil.rmtree(f)
         st.rerun()
 
 if db:
-    # Metrics
+    # Dashboard Metrics
     cols = st.columns(4)
     total_overdue = t_df[t_df['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
-    cols[0].metric("Financial Risk", f"${total_overdue/1e6:.1f}M")
-    cols[1].metric("Critical Projects", len(p_df[p_df['Risk_Level'] == 'High']))
+    cols[0].metric("Financial Exposure", f"${total_overdue/1e6:.1f}M")
+    cols[1].metric("Critical Risks", len(p_df[p_df['Risk_Level'] == 'High']))
     cols[2].metric("Market Index", m_df.iloc[-1]['Market_Sentiment'])
     cols[3].metric("Active Agents", len(AGENTS))
 
     st.divider()
 
-    # Chat
+    # Chat Interface
     if "messages" not in st.session_state: st.session_state.messages = []
     
     for m in st.session_state.messages:

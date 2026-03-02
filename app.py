@@ -17,10 +17,10 @@ st.set_page_config(page_title="Risk Intelligence Command", layout="wide", page_i
 
 st.markdown("""
     <style>
-    /* Global Background and Typography */
-    .stApp { background-color: #f0f2f6; font-family: 'Inter', sans-serif; }
+    /* Global Background */
+    .stApp { background-color: #f0f2f6; }
     
-    /* SIDEBAR: High-Contrast & Professional */
+    /* SIDEBAR: High-Contrast & Professional (Black text on White) */
     [data-testid="stSidebar"] {
         background-color: #ffffff !important;
         border-right: 2px solid #e2e8f0;
@@ -42,7 +42,7 @@ st.markdown("""
         margin-bottom: 35px;
         box-shadow: 0 10px 25px rgba(37, 99, 235, 0.2);
     }
-    .main-header h1 { color: white !important; font-size: 3rem !important; letter-spacing: -1px; }
+    .main-header h1 { color: white !important; font-size: 3rem !important; margin:0; }
     
     /* METRIC CARDS: Glowing Accents */
     div[data-testid="stMetric"] {
@@ -50,23 +50,19 @@ st.markdown("""
         padding: 25px;
         border-radius: 18px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-        border-bottom: 4px solid #e2e8f0;
-        transition: transform 0.3s ease;
+        border-bottom: 5px solid #e2e8f0;
     }
-    div[data-testid="stMetric"]:hover { transform: translateY(-5px); }
     
-    /* Color coding for metric status */
-    div[data-testid="stMetric"]:nth-child(1) { border-bottom-color: #ff4b4b; } /* Overdue */
-    div[data-testid="stMetric"]:nth-child(2) { border-bottom-color: #ffa500; } /* Risk */
-    div[data-testid="stMetric"]:nth-child(3) { border-bottom-color: #00d26a; } /* Health */
-    div[data-testid="stMetric"]:nth-child(4) { border-bottom-color: #6366f1; } /* Market */
+    /* Status Colors */
+    div[data-testid="stMetric"]:nth-child(1) { border-bottom-color: #ff4b4b; } 
+    div[data-testid="stMetric"]:nth-child(2) { border-bottom-color: #ffa500; } 
+    div[data-testid="stMetric"]:nth-child(3) { border-bottom-color: #00d26a; } 
+    div[data-testid="stMetric"]:nth-child(4) { border-bottom-color: #6366f1; } 
 
-    /* Chat Styling */
     .stChatMessage {
         background-color: white !important;
         border: 1px solid #e2e8f0 !important;
         border-radius: 15px !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.02);
     }
     </style>
     
@@ -115,14 +111,12 @@ def initialize_risk_engine():
 db, p_df, t_df, m_df = initialize_risk_engine()
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2092/2092663.png", width=80)
     st.header("SYSTEM CONTROLS")
     st.divider()
-    risk_level_ui = st.multiselect("High-Priority Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
-    complexity_threshold = st.slider("Complexity Scale", 0, 10, (2, 9))
+    risk_level_ui = st.multiselect("Priority Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
+    complexity_threshold = st.slider("Complexity Intensity", 0, 10, (2, 9))
     
     st.markdown("---")
-    st.subheader("🛰️ ENGINE STATUS")
     st.success("● CORE PROCESSOR: ACTIVE")
     st.success("● NEURAL MEMORY: SYNCED")
     if st.button("🚀 REBOOT SYSTEM"):
@@ -136,7 +130,7 @@ if db:
     high_risk_count = len(p_df[p_df['Risk_Level'] == 'High'])
     
     col1.metric("Financial Exposure", f"${overdue_total/1e6:.1f}M", "Total Overdue")
-    col2.metric("Critical Projects", high_risk_count, "Immediate Attention")
+    col2.metric("Critical Projects", high_risk_count, "High Priority")
     col3.metric("System Health", "98%", "Stable")
     col4.metric("Market Sentiment", m_df.iloc[-1]['Market_Sentiment'], "Live Feed")
 
@@ -151,7 +145,6 @@ if db:
         color_discrete_map={"High": "#ff4b4b", "Medium": "#ffa500", "Low": "#00d26a"},
         template="plotly_white", height=500
     )
-    fig.update_layout(bordercolor="#e2e8f0", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
@@ -166,7 +159,7 @@ if db:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Inquire about specific project risks..."):
+    if prompt := st.chat_input("Analyze specific risk patterns..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -175,7 +168,7 @@ if db:
             with st.status("Consulting Risk Engine...", expanded=False) as status:
                 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
                 qa_chain = create_stuff_documents_chain(llm, ChatPromptTemplate.from_messages([
-                    ("system", "You are the Strategic Risk Advisor. Provide concise, professional analysis. Context: {context}"),
+                    ("system", "You are the Strategic Risk Advisor. Provide concise analysis. Context: {context}"),
                     ("human", "{input}"),
                 ]))
                 rag_chain = create_retrieval_chain(db.as_retriever(search_kwargs={"k": 5}), qa_chain)
@@ -183,4 +176,4 @@ if db:
                 status.update(label="Analysis Delivered", state="complete")
             
             st.markdown(response["answer"])
-            st.session_state.messages.append({"role": "assistant", "content": response["answer"])
+            st.session_state.messages.append({"role": "assistant", "content": response["answer"]})

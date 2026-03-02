@@ -107,7 +107,7 @@ with st.sidebar:
     st.markdown("### 🛰️ System Status")
     st.success("🟢 Market Feed: LIVE")
     st.success("🟢 Risk Engine: SYNCED")
-    st.info("Using Gemini 3 Flash")
+    
 
 if db is not None:
     # --- TOP ROW: KPI CARDS ---

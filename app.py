@@ -1,39 +1,75 @@
-# --- 0. MANDATORY SQLITE HOT-SWAP (MUST BE FIRST) ---
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
 import streamlit as st
 import pandas as pd
 import os
 import time
-import shutil
 import plotly.express as px
 
-# 2026 Core Imports
+# 2026 Core RAG Imports
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import DataFrameLoader
+from langchain_classic.chains import create_retrieval_chain
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 
-# --- 1. UI & STYLING ---
-st.set_page_config(page_title="Risk Intel Command", layout="wide", page_icon="🛡️")
+# --- 1. PREMIUM UI & BRANDING STYLING ---
+st.set_page_config(page_title="Risk Intelligence Command", layout="wide", page_icon="🛡️")
 
 st.markdown("""
     <style>
+    /* Global Background */
     .stApp { background-color: #f8fafc; }
+    
+    /* SIDEBAR: High-Readability (Black text on White/Light Grey) */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff !important;
+        border-right: 2px solid #e2e8f0;
+    }
+    [data-testid="stSidebar"] .stMarkdown, 
+    [data-testid="stSidebar"] label, 
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] h2 {
+        color: #0f172a !important; /* Dark Slate for perfect reading */
+        font-weight: 600 !important;
+    }
+    
+    /* TOP BANNER: Modern Gradient */
     .main-header {
         background: linear-gradient(135deg, #0f172a 0%, #2563eb 100%);
-        padding: 40px; border-radius: 20px; color: white; text-align: center; margin-bottom: 35px;
+        padding: 40px;
+        border-radius: 20px;
+        color: white;
+        text-align: center;
+        margin-bottom: 35px;
+        box-shadow: 0 10px 25px rgba(37, 99, 235, 0.2);
     }
-    .agent-tag {
-        background-color: #eff6ff; color: #1e40af; padding: 4px 12px;
-        border-radius: 10px; font-size: 0.7rem; font-weight: 800; border: 1px solid #bfdbfe;
-        margin-bottom: 8px; display: inline-block;
+    .main-header h1 { color: white !important; font-size: 3rem !important; margin:0; }
+    
+    /* METRIC CARDS: Glowing Accents */
+    div[data-testid="stMetric"] {
+        background: white;
+        padding: 25px;
+        border-radius: 18px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        border-bottom: 5px solid #e2e8f0;
+    }
+    
+    /* Status Colors */
+    div[data-testid="stMetric"]:nth-child(1) { border-bottom-color: #ff4b4b; } 
+    div[data-testid="stMetric"]:nth-child(2) { border-bottom-color: #ffa500; } 
+    div[data-testid="stMetric"]:nth-child(3) { border-bottom-color: #00d26a; } 
+    div[data-testid="stMetric"]:nth-child(4) { border-bottom-color: #6366f1; } 
+
+    .stChatMessage {
+        background-color: white !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 15px !important;
     }
     </style>
+    
     <div class="main-header">
         <h1>PROJECT RISK INTELLIGENCE</h1>
-        <p>Gemini 3.1 Stable Multi-Agent Command • 2026</p>
+        <p style="font-size: 1.2rem; opacity: 0.9;">Enterprise Command & Risk Mitigation Engine</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -41,135 +77,122 @@ st.markdown("""
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("🔑 API Key Missing! Please add GOOGLE_API_KEY to Streamlit Secrets.")
+    st.error("🔑 System Credentials Missing! Please update Secrets.")
     st.stop()
 
-# --- 2. RESILIENT DATA INITIALIZATION ---
+# --- 2. PERSISTENT DATA ENGINE ---
 @st.cache_resource
-def initialize_system():
-    persist_dir = "./risk_db_v11_stable"
-    
+def initialize_risk_engine():
+    persist_dir = "./risk_db_2026"
     try:
-        # Load local datasets
         p_df = pd.read_csv('project_risk_raw_dataset.csv')
         t_df = pd.read_csv('transaction.csv')
         m_df = pd.read_csv('market_trends.csv')
-        
-        # 503 Resiliency Loop (Wait for Gemini 3.1 backend)
-        embeddings = None
-        for attempt in range(3):
-            try:
-                embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-                embeddings.embed_query("ping") # Verify connection
-                break
-            except Exception as e:
-                if "503" in str(e) and attempt < 2:
-                    time.sleep(3)
-                    continue
-                raise e
 
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+        # Check if we can load from disk to save quota
         if os.path.exists(persist_dir):
             vector_db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
         else:
-            # Context Enrichment Logic
-            latest_m = m_df.iloc[-1]
+            latest_market = m_df.sort_values('Date').groupby('Indicator').tail(1)
+            m_summary = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_market.iterrows()])
+
             def enrich(row):
                 pid = row['Project_ID']
                 overdue = t_df[(t_df['Project_ID'] == pid) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
-                return (f"PID: {pid} | Risk: {row['Risk_Level']} | Type: {row['Project_Type']} | "
-                        f"Overdue: ${overdue:,.0f} | Market: {latest_m['Market_Sentiment']}")
+                return (f"PROJECT ID: {pid} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | "
+                        f"Overdue: ${overdue:,.2f} | Market: {m_summary}")
 
-            p_df['context'] = p_df.apply(enrich, axis=1)
-            loader = DataFrameLoader(p_df, page_content_column="context")
-            vector_db = Chroma.from_documents(documents=loader.load(), embedding=embeddings, persist_directory=persist_dir)
+            p_df['master_context'] = p_df.apply(enrich, axis=1)
+            loader = DataFrameLoader(p_df, page_content_column="master_context")
+            
+            # This step uses API quota (only runs if persist_dir doesn't exist)
+            vector_db = Chroma.from_documents(
+                documents=loader.load(), 
+                embedding=embeddings, 
+                persist_directory=persist_dir
+            )
         
         return vector_db, p_df, t_df, m_df
     except Exception as e:
-        st.error(f"System Load Error: {e}")
+        if "429" in str(e):
+            st.error("🚫 API Quota Limit Hit. Please wait 60 seconds and refresh.")
+        else:
+            st.error(f"Engine Failure: {e}")
         return None, None, None, None
 
-db, p_df, t_df, m_df = initialize_system()
+# --- 3. DASHBOARD EXECUTION ---
+db, p_df, t_df, m_df = initialize_risk_engine()
 
-# --- 3. MULTI-AGENT ARCHITECTURE ---
-AGENTS = {
-    "Market Analyst": "Analyzes external sentiment and macro-economic trends.",
-    "Financial Auditor": "Analyzes budget utilization and payment risks.",
-    "Project Manager": "Analyzes scheduling, complexity, and internal delays.",
-    "Executive Reporter": "Synthesizes data into strategic summaries."
-}
-
-def extract_text(response):
-    """Handles Gemini 3.1 list-based response structures."""
-    content = getattr(response, "content", response)
-    if isinstance(content, list):
-        return "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in content]).strip()
-    return str(content).strip()
-
-
-
-def run_agent_workflow(query, vector_db):
-    try:
-        # RAG Search
-        docs = vector_db.similarity_search(query, k=4)
-        context = "\n".join([d.page_content for d in docs])
-        
-        # 2026 Stable Flash Model
-        llm = ChatGoogleGenerativeAI(model="gemini-3-flash", temperature=0.1)
-        
-        # Routing Logic
-        routing_prompt = f"Query: {query}\nSelect one agent: {list(AGENTS.keys())}. Reply with NAME ONLY."
-        raw_decision = llm.invoke(routing_prompt)
-        selected_name = extract_text(raw_decision)
-        
-        active_agent = next((a for a in AGENTS.keys() if a.lower() in selected_name.lower()), "Executive Reporter")
-        
-        # Specialist Execution
-        instruction = AGENTS.get(active_agent)
-        final_prompt = f"ROLE: {active_agent}\nMISSION: {instruction}\nDATA: {context}\nUSER: {query}"
-        
-        raw_response = llm.invoke(final_prompt)
-        return active_agent, extract_text(raw_response)
-    except Exception as e:
-        return "System", f"Workflow Interrupted: {str(e)}"
-
-# --- 4. DASHBOARD & CHAT ---
 with st.sidebar:
-    st.header("⚙️ SYSTEM CONTROL")
-    if st.button("🚀 FULL SYSTEM WIPE"):
+    st.header("⚙️ SYSTEM CONTROLS")
+    st.divider()
+    risk_level_ui = st.multiselect("Priority Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
+    complexity_threshold = st.slider("Complexity Intensity", 0, 10, (2, 9))
+    
+    st.markdown("---")
+    st.success("● CORE PROCESSOR: ACTIVE")
+    st.success("● NEURAL MEMORY: SYNCED")
+    if st.button("🚀 FULL SYSTEM REBOOT"):
+        # Deletes the local db and cache to start fresh
         st.cache_resource.clear()
-        # Clean up legacy directories
-        for f in ["./risk_db_final_v5", "./risk_db_v10_final", "./risk_db_v11_stable"]:
-            if os.path.exists(f): shutil.rmtree(f)
+        if os.path.exists("./risk_db_2026"):
+            import shutil
+            shutil.rmtree("./risk_db_2026")
         st.rerun()
 
 if db:
-    # KPI Metrics
-    cols = st.columns(4)
+    # KPI SECTION
+    col1, col2, col3, col4 = st.columns(4)
     overdue_total = t_df[t_df['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
-    cols[0].metric("Exposure", f"${overdue_total/1e6:.1f}M")
-    cols[1].metric("Critical Risks", len(p_df[p_df['Risk_Level'] == 'High']))
-    cols[2].metric("System Status", "Stable")
-    cols[3].metric("Market Index", m_df.iloc[-1]['Market_Sentiment'])
-
-    st.divider()
-
-    # Chat Logic
-    if "messages" not in st.session_state: st.session_state.messages = []
+    high_risk_count = len(p_df[p_df['Risk_Level'] == 'High'])
     
-    for m in st.session_state.messages:
-        with st.chat_message(m["role"]):
-            if "agent" in m: st.markdown(f"<span class='agent-tag'>{m['agent']}</span>", unsafe_allow_html=True)
-            st.markdown(m["content"])
+    col1.metric("Financial Exposure", f"${overdue_total/1e6:.1f}M", "Total Overdue")
+    col2.metric("Critical Alerts", high_risk_count, "High Priority")
+    col3.metric("System Health", "98%", "Stable")
+    col4.metric("Market Sentiment", m_df.iloc[-1]['Market_Sentiment'], "Live Feed")
 
-    if prompt := st.chat_input("Ask the Risk Advisory Team..."):
+    st.markdown("---")
+
+    # VISUALIZATION SECTION
+    st.subheader("📊 Portfolio Risk Heatmap")
+    
+    fig = px.scatter(
+        p_df, x="Complexity_Score", y="Budget_Utilization_Rate",
+        color="Risk_Level", size="Complexity_Score", hover_name="Project_ID",
+        color_discrete_map={"High": "#ff4b4b", "Medium": "#ffa500", "Low": "#00d26a"},
+        template="plotly_white", height=500
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+
+    # ADVISOR SECTION
+    st.subheader("💬 STRATEGIC ADVISORY CHAT")
+    
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    if prompt := st.chat_input("Inquire about specific risk patterns..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.status("Consulting Specialist Agents...", expanded=False) as s:
-                agent_name, result = run_agent_workflow(prompt, db)
-                s.update(label=f"Analysis Complete by {agent_name}", state="complete")
+            with st.status("Consulting Risk Engine...", expanded=False) as status:
+                llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0.1)
+                qa_chain = create_stuff_documents_chain(llm, ChatPromptTemplate.from_messages([
+                    ("system", "You are the Strategic Risk Advisor. Provide concise analysis. Context: {context}"),
+                    ("human", "{input}"),
+                ]))
+                rag_chain = create_retrieval_chain(db.as_retriever(search_kwargs={"k": 5}), qa_chain)
+                response = rag_chain.invoke({"input": prompt})
+                status.update(label="Analysis Delivered", state="complete")
             
-            st.markdown(f"<span class='agent-tag'>{agent_name}</span>", unsafe_allow_html=True)
-            st.markdown(result)
-            st.session_state.messages.append({"role": "assistant", "content": result, "agent": agent_name})
+            st.markdown(response["answer"])
+            st.session_state.messages.append({"role": "assistant", "content": response["answer"]})

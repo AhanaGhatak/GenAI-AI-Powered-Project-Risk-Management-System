@@ -28,7 +28,7 @@ st.markdown("""
     </style>
     <div class="main-header">
         <h1>PROJECT RISK INTELLIGENCE</h1>
-        <p>Multi-Agent Collaborative Command Center • v2.0</p>
+        <p>Multi-Agent Collaborative Command Center • v3.0 Stable</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -39,16 +39,18 @@ else:
     st.error("🔑 System Credentials Missing! Check Streamlit Secrets.")
     st.stop()
 
-# --- 2. DATA & VECTOR ENGINE ---
+# --- 2. DATA & VECTOR ENGINE (STABILIZED) ---
 @st.cache_resource
 def initialize_system():
-    persist_dir = "./risk_db_agents_v3"
+    # WE CHANGE THE FOLDER NAME HERE TO FORCE A FRESH START
+    persist_dir = "./risk_db_final_v4" 
+    
     try:
         p_df = pd.read_csv('project_risk_raw_dataset.csv')
         t_df = pd.read_csv('transaction.csv')
         m_df = pd.read_csv('market_trends.csv')
         
-        # Standard Stable Embedding Model
+        # CORRECT MODEL NAME FOR 2026
         embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         
         if os.path.exists(persist_dir):
@@ -83,48 +85,44 @@ AGENTS = {
 
 
 def run_agent_workflow(query, vector_db):
-    # 1. Retrieval (RAG)
-    docs = vector_db.similarity_search(query, k=5)
-    context = "\n".join([d.page_content for d in docs])
-    
-    # 2. Supervisor Routing
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1)
-    
-    routing_prompt = f"Given this query: '{query}', which agent should handle it? {list(AGENTS.keys())}. Respond with ONLY the agent name."
-    
     try:
+        # 1. Retrieval (RAG)
+        docs = vector_db.similarity_search(query, k=5)
+        context = "\n".join([d.page_content for d in docs])
+        
+        # 2. Supervisor Routing
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1)
+        
+        routing_prompt = f"Given this query: '{query}', which agent should handle it? {list(AGENTS.keys())}. Respond with ONLY the agent name."
+        
         raw_decision = llm.invoke(routing_prompt)
         selected_agent = raw_decision.content.strip()
         
-        # Clean up agent name mapping
-        matched_agent = "Reporting Agent" # Default fallback
+        # Map back to the clean key
+        matched_agent = "Reporting Agent" 
         for agent in AGENTS.keys():
             if agent.lower() in selected_agent.lower():
                 matched_agent = agent
                 break
-    except:
-        matched_agent = "Reporting Agent"
 
-    # 3. Specialist Execution
-    agent_instr = AGENTS.get(matched_agent)
-    final_prompt = f"ROLE: {matched_agent}\nMISSION: {agent_instr}\nCONTEXT: {context}\nQUERY: {query}"
-    
-    try:
+        # 3. Specialist Execution
+        agent_instr = AGENTS.get(matched_agent)
+        final_prompt = f"ROLE: {matched_agent}\nMISSION: {agent_instr}\nCONTEXT: {context}\nQUERY: {query}"
+        
         raw_response = llm.invoke(final_prompt)
         return matched_agent, raw_response.content
     except Exception as e:
-        return "System Error", f"The AI encountered a safety or quota block: {str(e)}"
+        return "System Status", f"The system is recalibrating or hit a limit. Please refresh in 60s. Error: {str(e)}"
 
 # --- 4. DASHBOARD RENDER ---
 with st.sidebar:
     st.header("⚙️ SYSTEM CONTROLS")
-    st.write("🛰️ **Active Agents:**")
-    for a in AGENTS.keys(): st.caption(f"• {a}")
-    st.divider()
     if st.button("🚀 FULL SYSTEM REBOOT"):
         st.cache_resource.clear()
-        if os.path.exists("./risk_db_agents_v3"):
-            shutil.rmtree("./risk_db_agents_v3")
+        # Clean up ALL old databases
+        for folder in ["./risk_db_agents_v3", "./risk_db_final_v4"]:
+            if os.path.exists(folder):
+                shutil.rmtree(folder)
         st.rerun()
 
 if db is not None:

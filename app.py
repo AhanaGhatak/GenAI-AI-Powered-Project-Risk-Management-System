@@ -1,63 +1,62 @@
+import os
 import streamlit as st
 import pandas as pd
-import os
-import time
 import plotly.express as px
 import google.generativeai as genai
 from typing import Annotated, TypedDict, List
 
-# Core Agentic & RAG Imports
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_community.vectorstores import Chroma
-from langchain_community.document_loaders import DataFrameLoader
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+# Core Agentic Imports
 from langgraph.graph import StateGraph, START, END
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
-# --- 1. PREMIUM UI & BRANDING STYLING ---
-st.set_page_config(page_title="Risk Intelligence Command", layout="wide", page_icon="🛡️")
+# --- 1. LIGHT-THEME UI SETUP ---
+st.set_page_config(page_title="Risk Intel Pro", layout="wide", page_icon="🛡️")
 
+# Custom CSS for High Visibility (Light Mode)
 st.markdown("""
     <style>
-    .stApp { background-color: #f8fafc; }
-    [data-testid="stSidebar"] { background-color: #ffffff !important; border-right: 2px solid #e2e8f0; }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] p, [data-testid="stSidebar"] h2 {
-        color: #0f172a !important; font-weight: 600 !important;
-    }
+    /* White Background & Dark Text */
+    .stApp { background-color: #ffffff; color: #1e293b; }
+    
+    /* Crisp Header */
     .main-header {
-        background: linear-gradient(135deg, #0f172a 0%, #2563eb 100%);
-        padding: 40px; border-radius: 20px; color: white; text-align: center;
-        margin-bottom: 35px; box-shadow: 0 10px 25px rgba(37, 99, 235, 0.2);
+        background: #1e40af; /* Deep Navy Blue */
+        padding: 25px; border-radius: 12px; text-align: center;
+        margin-bottom: 30px; border-bottom: 5px solid #3b82f6;
     }
-    .main-header h1 { color: white !important; font-size: 3rem !important; margin:0; }
-    div[data-testid="stMetric"] {
-        background: white; padding: 25px; border-radius: 18px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.03); border-bottom: 5px solid #e2e8f0;
+    .main-header h1 { color: #ffffff !important; font-size: 2.5rem; margin: 0; }
+    .main-header p { color: #dbeafe; font-size: 1.1rem; }
+    
+    /* High-Contrast Metric Cards */
+    .metric-container {
+        background: #f8fafc; border: 2px solid #e2e8f0;
+        padding: 20px; border-radius: 12px; text-align: center;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetric"]:nth-child(1) { border-bottom-color: #ff4b4b; } 
-    div[data-testid="stMetric"]:nth-child(2) { border-bottom-color: #ffa500; } 
-    div[data-testid="stMetric"]:nth-child(3) { border-bottom-color: #00d26a; } 
-    div[data-testid="stMetric"]:nth-child(4) { border-bottom-color: #6366f1; } 
-    .stChatMessage { background-color: white !important; border: 1px solid #e2e8f0 !important; border-radius: 15px !important; }
+    .metric-label { color: #64748b; font-weight: 600; font-size: 0.9rem; text-transform: uppercase; }
+    .metric-value { color: #1e293b; font-size: 2rem; font-weight: 800; }
+    
+    /* Chat Visibility */
+    .stChatMessage { background-color: #f1f5f9 !important; border: 1px solid #cbd5e1 !important; color: #000000 !important; }
     </style>
     
     <div class="main-header">
-        <h1>PROJECT RISK INTELLIGENCE</h1>
-        <p style="font-size: 1.2rem; opacity: 0.9;">Enterprise Command & Risk Mitigation Engine</p>
+        <h1>🛡️ RISK COMMAND CENTER</h1>
+        <p>Strategic Multi-Agent Intelligence Dashboard</p>
     </div>
     """, unsafe_allow_html=True)
 
-# API Security & Model Discovery
+# --- 2. AUTH & MODEL DISCOVERY ---
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
     os.environ["GOOGLE_API_KEY"] = api_key
     genai.configure(api_key=api_key)
 else:
-    st.error("🔑 System Credentials Missing! Please update Secrets.")
+    st.error("🔑 API Key Missing!")
     st.stop()
 
+@st.cache_resource
 def discover_stable_model():
     try:
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
@@ -67,82 +66,84 @@ def discover_stable_model():
     except: return "gemini-1.5-flash"
 
 working_model_id = discover_stable_model()
-llm = ChatGoogleGenerativeAI(model=working_model_id, temperature=0.1)
 
-# --- 2. PERSISTENT DATA ENGINE ---
-@st.cache_resource
-def initialize_risk_engine():
-    persist_dir = "./risk_db_2026"
+# --- 3. DATA ENGINE ---
+@st.cache_data
+def load_data():
     try:
         p_df = pd.read_csv('project_risk_raw_dataset.csv')
-        t_df = pd.read_csv('transaction.csv')
         m_df = pd.read_csv('market_trends.csv')
-
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-
-        if os.path.exists(persist_dir):
-            vector_db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
-        else:
-            latest_market = m_df.sort_values('Date').groupby('Indicator').tail(1)
-            m_summary = " | ".join([f"{r['Indicator']}: {r['Value']}" for _, r in latest_market.iterrows()])
-
-            def enrich(row):
-                pid = row['Project_ID']
-                overdue_sum = t_df[(t_df['Project_ID'] == pid) & (t_df['Payment_Status'] == 'Overdue')]['Amount_USD'].sum()
-                return (f"PROJECT ID: {pid} | Type: {row['Project_Type']} | Risk: {row['Risk_Level']} | "
-                        f"Overdue: ${overdue_sum:,.2f} | Market: {m_summary}")
-
-            p_df['master_context'] = p_df.apply(enrich, axis=1)
-            loader = DataFrameLoader(p_df, page_content_column="master_context")
-            vector_db = Chroma.from_documents(
-                documents=loader.load(), 
-                embedding=embeddings, 
-                persist_directory=persist_dir
-            )
+        t_df = pd.read_csv('transaction.csv')
         
-        return vector_db, p_df, t_df, m_df
+        # Clean column names
+        p_df.columns = p_df.columns.str.strip()
+        m_df.columns = m_df.columns.str.strip()
+        t_df.columns = t_df.columns.str.strip()
+        
+        return p_df, m_df, t_df
     except Exception as e:
-        st.error(f"Engine Failure: {e}")
-        return None, None, None, None
+        st.error(f"Data Load Error: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-db, p_df, t_df, m_df = initialize_risk_engine()
+p_df, m_df, t_df = load_data()
 
-# --- 3. MULTI-AGENT ARCHITECTURE ---
+# Helper to safely grab columns
+def get_safe_col(df, options):
+    for opt in options:
+        if opt in df.columns: return opt
+    return None
+
+# --- 4. AGENTIC BRAIN ---
+llm = ChatGoogleGenerativeAI(model=working_model_id, temperature=0.1)
+
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], "History"]
-    context: str
 
-# Node Definitions
+# Agent 1: Project Risk Manager (Generalist)
 def manager_agent(state: AgentState):
-    prompt = f"ROLE: Project Risk Manager. Overall owner. Context: {state['context']}\nUser: {state['messages'][-1].content}"
-    return {"messages": [AIMessage(content=llm.invoke(prompt).content, name="Project_Risk_Manager")]}
+    query = state['messages'][-1].content
+    prompt = f"PROJECT DATA:\n{p_df.describe().to_string()}\n\nROLE: Strategic Risk Manager. Provide a high-level strategic overview or mitigation for: {query}"
+    res = llm.invoke(prompt)
+    return {"messages": [AIMessage(content=res.content, name="Project_Risk_Manager")]}
 
+# Agent 2: Market Analysis Agent
 def market_agent(state: AgentState):
-    prompt = f"ROLE: Market Analysis Agent. Financial trends/news. Context: {state['context']}\nUser: {state['messages'][-1].content}"
-    return {"messages": [AIMessage(content=llm.invoke(prompt).content, name="Market_Analyst")]}
+    query = state['messages'][-1].content
+    prompt = f"MARKET DATA:\n{m_df.tail(10).to_string()}\n\nROLE: Market Analyst. Analyze financial trends, inflation, and market sentiment regarding: {query}"
+    res = llm.invoke(prompt)
+    return {"messages": [AIMessage(content=res.content, name="Market_Analyst")]}
 
+# Agent 3: Risk Scoring Agent (Transactions)
 def scoring_agent(state: AgentState):
-    prompt = f"ROLE: Risk Scoring Agent. Transaction/Investment risks. Context: {state['context']}\nUser: {state['messages'][-1].content}"
-    return {"messages": [AIMessage(content=llm.invoke(prompt).content, name="Risk_Scorer")]}
+    query = state['messages'][-1].content
+    txn_summary = t_df.groupby('Payment_Status')['Amount_USD'].sum().to_string()
+    prompt = f"TRANSACTION DATA SUMMARY:\n{txn_summary}\n\nROLE: Financial Risk Scorer. Assess payment defaults and transaction security for: {query}"
+    res = llm.invoke(prompt)
+    return {"messages": [AIMessage(content=res.content, name="Risk_Scorer")]}
 
+# Agent 4: Project Status Tracking Agent
 def status_agent(state: AgentState):
-    prompt = f"ROLE: Project Status Tracking Agent. Internal delays/resignation. Context: {state['context']}\nUser: {state['messages'][-1].content}"
-    return {"messages": [AIMessage(content=llm.invoke(prompt).content, name="Status_Tracker")]}
+    query = state['messages'][-1].content
+    status_summary = p_df[['Project_ID', 'Project_Phase', 'Team_Turnover_Rate']].head(10).to_string()
+    prompt = f"INTERNAL STATUS DATA:\n{status_summary}\n\nROLE: Status Tracker. Report on timeline delays, team turnover, and progress for: {query}"
+    res = llm.invoke(prompt)
+    return {"messages": [AIMessage(content=res.content, name="Status_Tracker")]}
 
+# Agent 5: Reporting Agent
 def reporting_agent(state: AgentState):
-    prompt = f"ROLE: Reporting Agent. Risk analytics/alerts. Context: {state['context']}\nUser: {state['messages'][-1].content}"
-    return {"messages": [AIMessage(content=llm.invoke(prompt).content, name="Reporting_Officer")]}
+    query = state['messages'][-1].content
+    prompt = f"ROLE: Reporting Officer. Generate a structured executive report or analytic summary for: {query}"
+    res = llm.invoke(prompt)
+    return {"messages": [AIMessage(content=res.content, name="Reporting_Officer")]}
 
-# Router Logic
-def smart_router(state: AgentState):
+def router(state: AgentState):
     msg = state['messages'][-1].content.lower()
-    if any(k in msg for k in ["market", "trend", "inflation", "sentiment"]): return "market"
-    if any(k in msg for k in ["score", "transaction", "payment", "overdue", "fraud"]): return "scoring"
-    if any(k in msg for k in ["status", "delay", "resignation", "turnover", "timeline"]): return "status"
-    if any(k in msg for k in ["report", "analytic", "alert", "summary", "list"]): return "reporting"
+    if any(k in msg for k in ["market", "trend", "price", "economy", "inflation", "sentiment"]): return "market"
+    if any(k in msg for k in ["transaction", "payment", "overdue", "amount", "score", "default"]): return "scoring"
+    if any(k in msg for k in ["status", "delay", "resignation", "turnover", "progress", "phase"]): return "status"
+    if any(k in msg for k in ["report", "analytic", "summary", "dashboard", "list"]): return "reporting"
     return "manager"
 
-# Graph Construction
 builder = StateGraph(AgentState)
 builder.add_node("manager", manager_agent)
 builder.add_node("market", market_agent)
@@ -150,81 +151,90 @@ builder.add_node("scoring", scoring_agent)
 builder.add_node("status", status_agent)
 builder.add_node("reporting", reporting_agent)
 
-builder.set_conditional_entry_point(smart_router, {
-    "manager": "manager", "market": "market", "scoring": "scoring", 
-    "status": "status", "reporting": "reporting"
+builder.set_conditional_entry_point(router, {
+    "manager": "manager", 
+    "market": "market", 
+    "scoring": "scoring", 
+    "status": "status", 
+    "reporting": "reporting"
 })
 
 for node in ["manager", "market", "scoring", "status", "reporting"]:
     builder.add_edge(node, END)
 
-agent_system = builder.compile()
+agent_brain = builder.compile()
 
-# --- 4. DASHBOARD EXECUTION ---
-with st.sidebar:
-    st.header("⚙️ SYSTEM CONTROLS")
-    st.divider()
-    risk_level_ui = st.multiselect("Priority Focus", ["High", "Medium", "Low"], default=["High", "Medium"])
-    complexity_threshold = st.slider("Complexity Intensity", 0, 10, (2, 9))
-    st.markdown("---")
-    st.success("● CORE PROCESSOR: ACTIVE")
-    st.success(f"● MODEL: {working_model_id}")
-    if st.button("🚀 FULL SYSTEM REBOOT"):
-        st.cache_resource.clear()
-        if os.path.exists("./risk_db_2026"):
-            import shutil
-            shutil.rmtree("./risk_db_2026")
-        st.rerun()
+# --- 5. DASHBOARD (High Visibility) ---
+risk_col = get_safe_col(p_df, ['Risk_Level', 'Risk'])
+complexity_col = get_safe_col(p_df, ['Complexity_Score', 'Complexity'])
+sentiment_col = get_safe_col(m_df, ['Market_Sentiment', 'Sentiment'])
 
-if db:
-    # KPI Section
-    col1, col2, col3, col4 = st.columns(4)
-    overdue_val = t_df[t_df['Payment_Status'] == 'Overdue']['Amount_USD'].sum()
-    high_count = len(p_df[p_df['Risk_Level'] == 'High'])
-    avg_turnover = p_df['Team_Turnover_Rate'].mean()
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+    high_count = len(p_df[p_df[risk_col] == 'High']) if risk_col else 0
+    st.markdown(f"""<div class="metric-container" style="border-top: 5px solid #ef4444;">
+        <div class="metric-label">Critical Risks</div>
+        <div class="metric-value" style="color: #ef4444;">{high_count}</div>
+    </div>""", unsafe_allow_html=True)
+
+with c2:
+    overdue_total = t_df[t_df['Payment_Status'] == 'Overdue']['Amount_USD'].sum() if 'Payment_Status' in t_df.columns else 0
+    st.markdown(f"""<div class="metric-container" style="border-top: 5px solid #f59e0b;">
+        <div class="metric-label">Overdue exposure</div>
+        <div class="metric-value" style="color: #f59e0b;">${overdue_total/1e6:.1f}M</div>
+    </div>""", unsafe_allow_html=True)
+
+with c3:
+    avg_comp = p_df[complexity_col].mean() if complexity_col else 0
+    st.markdown(f"""<div class="metric-container" style="border-top: 5px solid #3b82f6;">
+        <div class="metric-label">Avg Complexity</div>
+        <div class="metric-value" style="color: #3b82f6;">{avg_comp:.1f}</div>
+    </div>""", unsafe_allow_html=True)
+
+with c4:
+    last_sent = m_df[sentiment_col].iloc[-1] if sentiment_col else 0
+    st.markdown(f"""<div class="metric-container" style="border-top: 5px solid #10b981;">
+        <div class="metric-label">Market Sentiment</div>
+        <div class="metric-value" style="color: #10b981;">{last_sent:.2f}</div>
+    </div>""", unsafe_allow_html=True)
+
+st.write("") # Spacer
+
+col_left, col_right = st.columns([3, 2])
+
+with col_left:
+    if not p_df.empty:
+        fig = px.bar(p_df.head(20), x='Project_ID', y=complexity_col, color=risk_col, 
+                     title="Project Complexity Distribution (Sample)",
+                     color_discrete_map={'High': '#ef4444', 'Medium': '#f59e0b', 'Low': '#10b981'})
+        fig.update_layout(plot_bgcolor='white', paper_bgcolor='white', font_color='black')
+        st.plotly_chart(fig, use_container_width=True)
+
+with col_right:
+    if not p_df.empty:
+        fig2 = px.pie(p_df, names=risk_col, title="Total Portfolio Risk Summary",
+                     color_discrete_sequence=['#ef4444', '#f59e0b', '#10b981'])
+        st.plotly_chart(fig2, use_container_width=True)
+
+# --- 6. AGENTIC CHAT ---
+st.markdown("<h3 style='color: #1e40af;'>💬 Intelligence Briefing</h3>", unsafe_allow_html=True)
+if "history" not in st.session_state: st.session_state.history = []
+
+for m in st.session_state.history:
+    with st.chat_message(m["role"]): st.write(m["content"])
+
+if prompt := st.chat_input("Ask about high risks, transaction defaults, or market trends..."):
+    st.session_state.history.append({"role": "user", "content": prompt})
+    with st.chat_message("user"): st.write(prompt)
     
-    col1.metric("Financial Exposure", f"${overdue_val/1e6:.1f}M", "Total Overdue")
-    col2.metric("Critical Alerts", high_count, "High Risk Projects")
-    col3.metric("System Health", "98%", "Stable")
-    col4.metric("Market Sentiment", m_df.iloc[-1]['Market_Sentiment'], "Live Feed")
-
-    st.markdown("---")
-
-    # Heatmap
-    st.subheader("📊 Portfolio Risk Heatmap")
-    fig = px.scatter(
-        p_df, x="Complexity_Score", y="Budget_Utilization_Rate",
-        color="Risk_Level", size="Complexity_Score", hover_name="Project_ID",
-        color_discrete_map={"High": "#ff4b4b", "Medium": "#ffa500", "Low": "#00d26a"},
-        template="plotly_white", height=500
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-
-    # Agentic Chat
-    st.subheader("💬 MULTI-AGENT STRATEGIC ADVISORY")
-    if "chat_history" not in st.session_state: st.session_state.chat_history = []
-
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
-
-    if prompt := st.chat_input("Inquire about specific risk patterns..."):
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.status("Consulting Specialized Agents...", expanded=False) as status:
-                # RAG Step
-                retrieved_docs = db.similarity_search(prompt, k=5)
-                context_str = "\n".join([d.page_content for d in retrieved_docs])
-                
-                # Agent Step
-                result = agent_system.invoke({"messages": [HumanMessage(content=prompt)], "context": context_str})
-                final_msg = result["messages"][-1]
-                agent_name = final_msg.name.replace("_", " ")
-                status.update(label=f"Insight from {agent_name}", state="complete")
-            
-            output_text = f"**[{agent_name}]**\n\n{final_msg.content}"
-            st.markdown(output_text)
-            st.session_state.chat_history.append({"role": "assistant", "content": output_text})
+    with st.spinner("🤖 Consulting Specialist Agents..."):
+        try:
+            result = agent_brain.invoke({"messages": [HumanMessage(content=prompt)]})
+            ans = result["messages"][-1]
+            agent_name = ans.name.replace("_", " ")
+            full_msg = f"**{agent_name}**: {ans.content}"
+            st.chat_message("assistant").write(full_msg)
+            st.session_state.history.append({"role": "assistant", "content": full_msg})
+        except Exception as e:
+            st.error(f"Error: {e}")
